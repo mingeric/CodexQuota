@@ -37,13 +37,13 @@ context.fillEllipse(in: CGRect(x: 575, y: 590, width: 500, height: 500))
 
 let center = CGPoint(x: 512, y: 520)
 let radius: CGFloat = 285
-context.setStrokeColor(CGColor(red: 0.12, green: 0.25, blue: 0.39, alpha: 0.96))
+context.setStrokeColor(CGColor(red: 0.40, green: 0.61, blue: 0.77, alpha: 0.96))
 context.setLineWidth(58)
 context.setLineCap(CGLineCap.round)
 context.addArc(center: center, radius: radius, startAngle: -38 * .pi / 180, endAngle: 218 * .pi / 180, clockwise: false)
 context.strokePath()
 
-context.setStrokeColor(CGColor(red: 0.26, green: 0.48, blue: 0.67, alpha: 0.95))
+context.setStrokeColor(CGColor(red: 0.56, green: 0.73, blue: 0.86, alpha: 0.95))
 context.setLineWidth(17)
 for degrees in [-38.0, 5.0, 48.0, 91.0, 134.0, 177.0, 218.0] {
     let angle = CGFloat(degrees) * .pi / 180
@@ -55,13 +55,13 @@ for degrees in [-38.0, 5.0, 48.0, 91.0, 134.0, 177.0, 218.0] {
 context.strokePath()
 
 let needleAngle = CGFloat(48.0) * .pi / 180
-context.setStrokeColor(CGColor(red: 0.12, green: 0.54, blue: 0.79, alpha: 1))
+context.setStrokeColor(CGColor(red: 0.42, green: 0.73, blue: 0.91, alpha: 1))
 context.setLineWidth(42)
 context.setLineCap(CGLineCap.round)
 context.move(to: center)
 context.addLine(to: CGPoint(x: center.x + cos(needleAngle) * 210, y: center.y + sin(needleAngle) * 210))
 context.strokePath()
-context.setFillColor(CGColor(red: 0.12, green: 0.25, blue: 0.39, alpha: 1))
+context.setFillColor(CGColor(red: 0.40, green: 0.61, blue: 0.77, alpha: 1))
 context.fillEllipse(in: CGRect(x: center.x - 35, y: center.y - 35, width: 70, height: 70))
 
 guard let image = context.makeImage(), let png = NSBitmapImageRep(cgImage: image).representation(using: .png, properties: [:]) else {
