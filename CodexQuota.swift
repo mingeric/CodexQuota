@@ -109,6 +109,7 @@ final class QuotaModel: ObservableObject {
 
 struct QuotaView: View {
     @ObservedObject var model: QuotaModel
+    let onClose: () -> Void
     @AppStorage("panelBackgroundHex") private var savedBackgroundHex = "17212B"
     @AppStorage("panelBackgroundOpacity") private var savedBackgroundOpacity = 0.38
     @AppStorage("accentHex") private var savedAccentHex = "8CD1FC"
@@ -233,8 +234,8 @@ struct QuotaView: View {
                         }
                         .padding(16).frame(width: 275)
                     }
-                Button { NSApp.terminate(nil) } label: { Image(systemName: "xmark") }
-                    .buttonStyle(.plain).foregroundStyle(.white.opacity(0.55)).help("退出")
+                Button(action: onClose) { Image(systemName: "xmark") }
+                    .buttonStyle(.plain).foregroundStyle(.white.opacity(0.55)).help("隐藏面板（可从菜单栏图标重新打开）")
             }
             if model.windows.isEmpty {
                 Text(model.status).font(.system(size: 11)).foregroundStyle(.white.opacity(0.65)).lineLimit(2)
@@ -335,10 +336,24 @@ extension Color {
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private var panel: NSPanel!
+    private var statusItem: NSStatusItem!
     private let model = QuotaModel()
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory)
+        statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
+        if let button = statusItem.button {
+            button.image = NSApp.applicationIconImage
+            button.image?.size = NSSize(width: 18, height: 18)
+            button.image?.isTemplate = false
+            button.toolTip = "CodexQuota · 打开额度面板"
+        }
+        let menu = NSMenu()
+        menu.addItem(NSMenuItem(title: "显示额度面板", action: #selector(showPanel), keyEquivalent: ""))
+        menu.addItem(.separator())
+        menu.addItem(NSMenuItem(title: "退出 CodexQuota", action: #selector(quitApp), keyEquivalent: "q"))
+        statusItem.menu = menu
+
         panel = NSPanel(contentRect: NSRect(x: 0, y: 0, width: 250, height: 160), styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
         panel.isFloatingPanel = true
         panel.identifier = NSUserInterfaceItemIdentifier("CodexQuotaPanel")
@@ -348,7 +363,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         panel.backgroundColor = .clear
         panel.hasShadow = true
         panel.isMovableByWindowBackground = true
-        panel.contentView = NSHostingView(rootView: QuotaView(model: model))
+        panel.contentView = NSHostingView(rootView: QuotaView(model: model, onClose: { [weak self] in self?.panel.orderOut(nil) }))
         positionPanel()
         panel.orderFrontRegardless()
         model.start()
@@ -360,7 +375,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         panel.setFrameOrigin(NSPoint(x: visible.maxX - panel.frame.width - 18, y: visible.minY + 18))
     }
 
-    func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { true }
+    @objc private func showPanel() {
+        panel.orderFrontRegardless()
+    }
+
+    @objc private func quitApp() {
+        NSApp.terminate(nil)
+    }
+
+    func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { false }
 }
 
 @main
