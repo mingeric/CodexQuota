@@ -14,7 +14,7 @@ The app reads the existing OAuth access token from `~/.codex/auth.json` locally 
 - macOS 13 or newer; SwiftUI and AppKit.
 - The panel stays above other windows and appears on all Spaces. The menu-bar app icon reopens it; closing the panel hides it without quitting the app.
 - Drag the grip beside the title to reposition the panel. Use the palette button to set the background and accent colors, opacity, corner radius, and an imported image skin; “Save and overwrite current skin” persists the selection across launches. Imported images stay in local Application Support storage.
-- The panel shows system memory in used / total GB (for example, `12.3 / 16 GB`), sampled locally every two seconds. This does not poll the Codex quota endpoint.
+- The panel estimates system memory from resident internal pages plus wired and compressed pages, subtracting purgeable pages, against physical RAM. It shows used / total GB and percentage, sampled locally every two seconds. This does not poll the Codex quota endpoint.
 - The skin editor includes native macOS color pickers and editable six-digit RGB hex values for the background and accent colors.
 - No analytics, telemetry, or third-party dependencies.
 - The panel is local to the active display and currently has no settings screen.

@@ -35,10 +35,14 @@ final class QuotaModel: ObservableObject {
         }
         guard result == KERN_SUCCESS else { return }
         let pageSize = UInt64(vm_page_size)
-        let usedPages = UInt64(info.active_count) + UInt64(info.wire_count) + UInt64(info.compressor_page_count)
-        let usedGB = Double(usedPages * pageSize) / 1_073_741_824
-        let totalGB = Double(ProcessInfo.processInfo.physicalMemory) / 1_073_741_824
-        systemMemoryLabel = String(format: "内存 %.1f / %.0f GB", usedGB, totalGB)
+        let internalPages = UInt64(info.internal_page_count)
+        let purgeablePages = min(internalPages, UInt64(info.purgeable_count))
+        let usedPages = internalPages - purgeablePages + UInt64(info.wire_count) + UInt64(info.compressor_page_count)
+        let totalBytes = ProcessInfo.processInfo.physicalMemory
+        let usedBytes = min(totalBytes, usedPages * pageSize)
+        let usedGB = Double(usedBytes) / 1_073_741_824
+        let totalGB = Double(totalBytes) / 1_073_741_824
+        systemMemoryLabel = String(format: "内存 %.1f / %.0f GB · %.0f%%", usedGB, totalGB, Double(usedBytes) / Double(totalBytes) * 100)
     }
 
     func refresh() async {
@@ -111,13 +115,15 @@ struct QuotaView: View {
     @ObservedObject var model: QuotaModel
     let onClose: () -> Void
     @AppStorage("panelBackgroundHex") private var savedBackgroundHex = "17212B"
-    @AppStorage("panelBackgroundOpacity") private var savedBackgroundOpacity = 0.38
+    @AppStorage("panelBackgroundOpacity") private var savedBackgroundOpacity = 0.0
+    @AppStorage("panelTextOpacity") private var savedTextOpacity = 0.55
     @AppStorage("accentHex") private var savedAccentHex = "8CD1FC"
     @AppStorage("panelCornerRadius") private var savedCornerRadius = 15.0
     @AppStorage("skinImagePath") private var skinImagePath = ""
     @State private var draftBackgroundHex = "17212B"
     @State private var draftAccentHex = "8CD1FC"
-    @State private var draftOpacity = 0.38
+    @State private var draftOpacity = 0.0
+    @State private var draftTextOpacity = 0.55
     @State private var draftCornerRadius = 15.0
     @State private var skinImage: NSImage?
     @State private var showingSkinEditor = false
@@ -139,9 +145,9 @@ struct QuotaView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack(spacing: 8) {
-                Image(systemName: "line.3.horizontal").font(.system(size: 10, weight: .bold)).foregroundStyle(textColor.opacity(0.55))
+                Image(systemName: "line.3.horizontal").font(.system(size: 10, weight: .bold)).foregroundStyle(textColor.opacity(0.55 * savedTextOpacity))
                 Image(nsImage: NSApp.applicationIconImage).resizable().interpolation(.high)
-                    .frame(width: 17, height: 17).clipShape(RoundedRectangle(cornerRadius: 4))
+                    .frame(width: 17, height: 17).clipShape(RoundedRectangle(cornerRadius: 4)).opacity(savedTextOpacity)
                 Text("Codex 额度").font(.system(size: 13, weight: .semibold))
             }
             .overlay(WindowDragHandle().accessibilityHidden(true))
@@ -150,15 +156,16 @@ struct QuotaView: View {
             HStack(spacing: 8) {
                 Spacer()
                 Button { Task { await model.refresh() } } label: { Image(systemName: "arrow.clockwise") }
-                    .buttonStyle(.plain).foregroundStyle(textColor.opacity(0.75)).help("立即刷新")
+                    .buttonStyle(.plain).foregroundStyle(textColor.opacity(0.75 * savedTextOpacity)).help("立即刷新")
                 Button {
                     draftBackgroundHex = savedBackgroundHex
                     draftAccentHex = savedAccentHex
                     draftOpacity = savedBackgroundOpacity
+                    draftTextOpacity = savedTextOpacity
                     draftCornerRadius = savedCornerRadius
                     showingSkinEditor.toggle()
                 } label: { Image(systemName: "paintpalette") }
-                    .buttonStyle(.plain).foregroundStyle(textColor.opacity(0.75)).help("编辑背景皮肤")
+                    .buttonStyle(.plain).foregroundStyle(textColor.opacity(0.75 * savedTextOpacity)).help("编辑背景皮肤")
                     .popover(isPresented: $showingSkinEditor, arrowEdge: .top) {
                         VStack(alignment: .leading, spacing: 14) {
                             Text("背景皮肤").font(.system(size: 13, weight: .semibold))
@@ -194,9 +201,17 @@ struct QuotaView: View {
                                 HStack {
                                     Text("透明度")
                                     Spacer()
-                                    Text("\(Int(draftOpacity * 100))%").monospacedDigit().foregroundStyle(.secondary)
+                                    Text(draftOpacity == 0 ? "完全透出" : "\(Int(draftOpacity * 100))%").monospacedDigit().foregroundStyle(.secondary)
                                 }
-                                Slider(value: $draftOpacity, in: 0.28...0.85)
+                                Slider(value: $draftOpacity, in: 0...1)
+                            }.font(.system(size: 12))
+                            VStack(alignment: .leading, spacing: 5) {
+                                HStack {
+                                    Text("文字透明度")
+                                    Spacer()
+                                    Text("\(Int(draftTextOpacity * 100))%").monospacedDigit().foregroundStyle(.secondary)
+                                }
+                                Slider(value: $draftTextOpacity, in: 0.1...1)
                             }.font(.system(size: 12))
                             VStack(alignment: .leading, spacing: 5) {
                                 HStack {
@@ -210,7 +225,8 @@ struct QuotaView: View {
                                 Button("默认") {
                                     draftBackgroundHex = "17212B"
                                     draftAccentHex = "8CD1FC"
-                                    draftOpacity = 0.38
+                                    draftOpacity = 0
+                                    draftTextOpacity = 0.55
                                     draftCornerRadius = 15
                                 }
                                 Spacer()
@@ -218,6 +234,7 @@ struct QuotaView: View {
                                     savedBackgroundHex = draftBackgroundHex
                                     savedAccentHex = draftAccentHex
                                     savedBackgroundOpacity = draftOpacity
+                                    savedTextOpacity = draftTextOpacity
                                     savedCornerRadius = draftCornerRadius
                                     showingSkinEditor = false
                                 }.buttonStyle(.borderedProminent)
@@ -227,44 +244,44 @@ struct QuotaView: View {
                         .padding(16).frame(width: 275)
                     }
                 Button(action: onClose) { Image(systemName: "xmark") }
-                    .buttonStyle(.plain).foregroundStyle(textColor.opacity(0.65)).help("隐藏面板（可从菜单栏图标重新打开）")
+                    .buttonStyle(.plain).foregroundStyle(textColor.opacity(0.65 * savedTextOpacity)).help("隐藏面板（可从菜单栏图标重新打开）")
             }
             if model.windows.isEmpty {
-                Text(model.status).font(.system(size: 11)).foregroundStyle(textColor.opacity(0.72)).lineLimit(2)
+                Text(model.status).font(.system(size: 11)).foregroundStyle(textColor.opacity(0.72 * savedTextOpacity)).lineLimit(2)
             } else {
                 ForEach(model.windows) { window in
                     VStack(alignment: .leading, spacing: 5) {
                         HStack {
                             Text(window.label).font(.system(size: 12, weight: .medium))
                             Spacer()
-                            Text("\(Int(window.remaining.rounded()))% 剩余").font(.system(size: 11, weight: .semibold, design: .rounded)).foregroundStyle(textColor)
+                            Text("\(Int(window.remaining.rounded()))% 剩余").font(.system(size: 11, weight: .semibold, design: .rounded)).foregroundStyle(textColor.opacity(savedTextOpacity))
                         }
                         GeometryReader { geo in
                             ZStack(alignment: .leading) {
-                                Capsule().fill(textColor.opacity(0.16))
-                                Capsule().fill(accent).frame(width: geo.size.width * window.remaining / 100)
+                                Capsule().fill(textColor.opacity(0.16 * savedTextOpacity))
+                                Capsule().fill(accent.opacity(savedTextOpacity)).frame(width: geo.size.width * window.remaining / 100)
                             }
                         }.frame(height: 4)
                         if let reset = window.resetAt {
-                            Text("重置于 \(reset, style: .relative)").font(.system(size: 10)).foregroundStyle(textColor.opacity(0.68))
+                            Text("重置于 \(reset, style: .relative)").font(.system(size: 10)).foregroundStyle(textColor.opacity(0.68 * savedTextOpacity))
                         }
                     }
                 }
-                Text("\(model.updatedAt.map { "更新于 \($0.formatted(date: .omitted, time: .shortened))" } ?? model.status) · 手动刷新").font(.system(size: 9)).foregroundStyle(textColor.opacity(0.58))
+                Text("\(model.updatedAt.map { "更新于 \($0.formatted(date: .omitted, time: .shortened))" } ?? model.status) · 手动刷新").font(.system(size: 9)).foregroundStyle(textColor.opacity(0.58 * savedTextOpacity))
             }
             Text(model.systemMemoryLabel)
-                .font(.system(size: 9, design: .rounded)).foregroundStyle(textColor.opacity(0.65))
+                .font(.system(size: 9, design: .rounded)).foregroundStyle(textColor.opacity(0.65 * savedTextOpacity))
         }
-        .foregroundStyle(textColor)
+        .foregroundStyle(textColor.opacity(savedTextOpacity))
         .padding(14).frame(width: 250)
         .background {
             GeometryReader { geometry in
                 ZStack {
-                    RoundedRectangle(cornerRadius: savedCornerRadius, style: .continuous).fill(.ultraThinMaterial)
                     if let skinImage {
                         Image(nsImage: skinImage).resizable().scaledToFill()
                             .frame(width: geometry.size.width, height: geometry.size.height).clipped()
-                        savedBackground.opacity(savedBackgroundOpacity)
+                            .opacity(savedBackgroundOpacity)
+                        savedBackground.opacity(savedBackgroundOpacity * 0.24)
                     } else {
                         savedBackground.opacity(savedBackgroundOpacity)
                     }
@@ -272,10 +289,9 @@ struct QuotaView: View {
             }
         }
         .clipShape(RoundedRectangle(cornerRadius: savedCornerRadius, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: savedCornerRadius, style: .continuous).stroke(textColor.opacity(0.16), lineWidth: 1))
+        .overlay(RoundedRectangle(cornerRadius: savedCornerRadius, style: .continuous).stroke(textColor.opacity(0.24 * savedBackgroundOpacity), lineWidth: 1))
         .onAppear {
             loadSkinImage()
-            if savedBackgroundOpacity < 0.28 { savedBackgroundOpacity = 0.48 }
         }
     }
 
