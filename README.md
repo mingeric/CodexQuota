@@ -13,6 +13,8 @@ The app reads the existing OAuth access token from `~/.codex/auth.json` locally 
 
 - macOS 13 or newer; SwiftUI and AppKit.
 - The panel stays above other windows and appears on all Spaces.
+- Drag the grip beside the title to reposition the panel. Use the palette button to set the background and accent colors, opacity, corner radius, and an imported image skin; “Save and overwrite current skin” persists the selection across launches. Imported images stay in local Application Support storage.
+- The panel shows this app's resident memory use, sampled locally every two seconds. This does not poll the Codex quota endpoint.
 - No analytics, telemetry, or third-party dependencies.
 - The panel is local to the active display and currently has no settings screen.
 

@@ -1,5 +1,7 @@
 import AppKit
 import SwiftUI
+import Darwin
+import UniformTypeIdentifiers
 
 struct QuotaWindow: Identifiable {
     let id: String
@@ -13,8 +15,25 @@ final class QuotaModel: ObservableObject {
     @Published var windows: [QuotaWindow] = []
     @Published var status = "正在读取额度…"
     @Published var updatedAt: Date?
+    @Published var memoryMB: Double?
+    private var memoryTimer: Timer?
     func start() {
         Task { await refresh() }
+        updateMemory()
+        memoryTimer = Timer.scheduledTimer(withTimeInterval: 2, repeats: true) { [weak self] _ in
+            Task { @MainActor in self?.updateMemory() }
+        }
+    }
+
+    private func updateMemory() {
+        var info = mach_task_basic_info()
+        var count = mach_msg_type_number_t(MemoryLayout<mach_task_basic_info>.size / MemoryLayout<natural_t>.size)
+        let result = withUnsafeMutablePointer(to: &info) { pointer in
+            pointer.withMemoryRebound(to: integer_t.self, capacity: Int(count)) {
+                task_info(mach_task_self_, task_flavor_t(MACH_TASK_BASIC_INFO), $0, &count)
+            }
+        }
+        if result == KERN_SUCCESS { memoryMB = Double(info.resident_size) / 1_048_576 }
     }
 
     func refresh() async {
@@ -85,16 +104,102 @@ final class QuotaModel: ObservableObject {
 
 struct QuotaView: View {
     @ObservedObject var model: QuotaModel
-    private let accent = Color(red: 0.55, green: 0.82, blue: 0.99)
+    @AppStorage("panelBackgroundHex") private var savedBackgroundHex = "17212B"
+    @AppStorage("panelBackgroundOpacity") private var savedBackgroundOpacity = 0.38
+    @AppStorage("accentHex") private var savedAccentHex = "8CD1FC"
+    @AppStorage("panelCornerRadius") private var savedCornerRadius = 15.0
+    @AppStorage("skinImagePath") private var skinImagePath = ""
+    @State private var draftBackground = Color(red: 23 / 255, green: 33 / 255, blue: 43 / 255)
+    @State private var draftAccent = Color(red: 140 / 255, green: 209 / 255, blue: 252 / 255)
+    @State private var draftOpacity = 0.38
+    @State private var draftCornerRadius = 15.0
+    @State private var skinImage: NSImage?
+    @State private var showingSkinEditor = false
+    @State private var lastDragTranslation = CGSize.zero
+
+    private var savedBackground: Color { Color(hex: savedBackgroundHex) }
+    private var accent: Color { Color(hex: savedAccentHex) }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack(spacing: 8) {
+                Image(systemName: "line.3.horizontal").font(.system(size: 10, weight: .bold)).foregroundStyle(.white.opacity(0.45))
                 Image(systemName: "gauge.with.dots.needle.67percent").foregroundStyle(accent)
                 Text("Codex 额度").font(.system(size: 13, weight: .semibold))
+            }
+            .contentShape(Rectangle())
+            .gesture(DragGesture(minimumDistance: 3)
+                .onChanged { value in
+                    let dx = value.translation.width - lastDragTranslation.width
+                    let dy = value.translation.height - lastDragTranslation.height
+                    if let panel = NSApp.windows.first(where: { $0.identifier?.rawValue == "CodexQuotaPanel" && $0.isVisible }) {
+                        let origin = panel.frame.origin
+                        panel.setFrameOrigin(NSPoint(x: origin.x + dx, y: origin.y - dy))
+                    }
+                    lastDragTranslation = value.translation
+                }
+                .onEnded { _ in lastDragTranslation = .zero }
+            )
+            .help("拖动这里移动面板")
+
+            HStack(spacing: 8) {
                 Spacer()
                 Button { Task { await model.refresh() } } label: { Image(systemName: "arrow.clockwise") }
                     .buttonStyle(.plain).foregroundStyle(.white.opacity(0.7)).help("立即刷新")
+                Button {
+                    draftBackground = savedBackground
+                    draftAccent = accent
+                    draftOpacity = savedBackgroundOpacity
+                    draftCornerRadius = savedCornerRadius
+                    showingSkinEditor.toggle()
+                } label: { Image(systemName: "paintpalette") }
+                    .buttonStyle(.plain).foregroundStyle(.white.opacity(0.7)).help("编辑背景皮肤")
+                    .popover(isPresented: $showingSkinEditor, arrowEdge: .top) {
+                        VStack(alignment: .leading, spacing: 14) {
+                            Text("背景皮肤").font(.system(size: 13, weight: .semibold))
+                            ColorPicker("背景颜色", selection: $draftBackground, supportsOpacity: false)
+                            ColorPicker("强调色", selection: $draftAccent, supportsOpacity: false)
+                            HStack {
+                                Button("导入图片皮肤…", action: importSkin)
+                                if !skinImagePath.isEmpty {
+                                    Button("移除图片") { skinImagePath = ""; skinImage = nil }
+                                }
+                            }.font(.system(size: 11))
+                            VStack(alignment: .leading, spacing: 5) {
+                                HStack {
+                                    Text("透明度")
+                                    Spacer()
+                                    Text("\(Int(draftOpacity * 100))%").monospacedDigit().foregroundStyle(.secondary)
+                                }
+                                Slider(value: $draftOpacity, in: 0.12...0.85)
+                            }.font(.system(size: 12))
+                            VStack(alignment: .leading, spacing: 5) {
+                                HStack {
+                                    Text("圆角")
+                                    Spacer()
+                                    Text("\(Int(draftCornerRadius)) pt").monospacedDigit().foregroundStyle(.secondary)
+                                }
+                                Slider(value: $draftCornerRadius, in: 4...32)
+                            }.font(.system(size: 12))
+                            HStack {
+                                Button("默认") {
+                                    draftBackground = Color(hex: "17212B")
+                                    draftAccent = Color(hex: "8CD1FC")
+                                    draftOpacity = 0.38
+                                    draftCornerRadius = 15
+                                }
+                                Spacer()
+                                Button("保存并覆盖当前皮肤") {
+                                    savedBackgroundHex = draftBackground.hexString
+                                    savedAccentHex = draftAccent.hexString
+                                    savedBackgroundOpacity = draftOpacity
+                                    savedCornerRadius = draftCornerRadius
+                                    showingSkinEditor = false
+                                }.buttonStyle(.borderedProminent)
+                            }
+                        }
+                        .padding(16).frame(width: 245)
+                    }
                 Button { NSApp.terminate(nil) } label: { Image(systemName: "xmark") }
                     .buttonStyle(.plain).foregroundStyle(.white.opacity(0.55)).help("退出")
             }
@@ -121,18 +226,69 @@ struct QuotaView: View {
                 }
                 Text("\(model.updatedAt.map { "更新于 \($0.formatted(date: .omitted, time: .shortened))" } ?? model.status) · 手动刷新").font(.system(size: 9)).foregroundStyle(.white.opacity(0.4))
             }
+            Text("内存 \(model.memoryMB.map { "\(Int($0.rounded())) MB" } ?? "读取中")")
+                .font(.system(size: 9, design: .rounded)).foregroundStyle(.white.opacity(0.45))
         }
-        .padding(14).frame(width: 230)
+        .padding(14).frame(width: 250)
         .background {
-            RoundedRectangle(cornerRadius: 15, style: .continuous)
-                .fill(.ultraThinMaterial)
-                .overlay {
-                    RoundedRectangle(cornerRadius: 15, style: .continuous)
-                        .fill(Color.black.opacity(0.28))
+            GeometryReader { geometry in
+                ZStack {
+                    RoundedRectangle(cornerRadius: savedCornerRadius, style: .continuous).fill(.ultraThinMaterial)
+                    if let skinImage {
+                        Image(nsImage: skinImage).resizable().scaledToFill()
+                            .frame(width: geometry.size.width, height: geometry.size.height).clipped()
+                        savedBackground.opacity(savedBackgroundOpacity)
+                    } else {
+                        savedBackground.opacity(savedBackgroundOpacity)
+                    }
                 }
+            }
         }
-        .clipShape(RoundedRectangle(cornerRadius: 15, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: 15).stroke(.white.opacity(0.13), lineWidth: 1))
+        .clipShape(RoundedRectangle(cornerRadius: savedCornerRadius, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: savedCornerRadius, style: .continuous).stroke(.white.opacity(0.13), lineWidth: 1))
+        .onAppear(perform: loadSkinImage)
+    }
+
+    private func importSkin() {
+        let picker = NSOpenPanel()
+        picker.allowedContentTypes = [.image]
+        picker.allowsMultipleSelection = false
+        picker.canChooseDirectories = false
+        guard picker.runModal() == .OK, let source = picker.url else { return }
+        do {
+            let folder = FileManager.default.homeDirectoryForCurrentUser
+                .appendingPathComponent("Library/Application Support/CodexQuota/Skins", isDirectory: true)
+            try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+            let ext = source.pathExtension.isEmpty ? "png" : source.pathExtension
+            let destination = folder.appendingPathComponent(UUID().uuidString).appendingPathExtension(ext)
+            try FileManager.default.copyItem(at: source, to: destination)
+            skinImagePath = destination.path
+            skinImage = NSImage(contentsOf: destination)
+        } catch {
+            model.status = "导入图片失败：\(error.localizedDescription)"
+        }
+    }
+
+    private func loadSkinImage() {
+        skinImage = skinImagePath.isEmpty ? nil : NSImage(contentsOfFile: skinImagePath)
+    }
+}
+
+extension Color {
+    init(hex: String) {
+        let value = UInt64(hex, radix: 16) ?? 0x17212B
+        self.init(
+            .sRGB,
+            red: Double((value >> 16) & 0xFF) / 255,
+            green: Double((value >> 8) & 0xFF) / 255,
+            blue: Double(value & 0xFF) / 255,
+            opacity: 1
+        )
+    }
+
+    var hexString: String {
+        let color = NSColor(self).usingColorSpace(.deviceRGB) ?? .black
+        return String(format: "%02X%02X%02X", Int(color.redComponent * 255), Int(color.greenComponent * 255), Int(color.blueComponent * 255))
     }
 }
 
@@ -145,11 +301,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         NSApp.setActivationPolicy(.accessory)
         panel = NSPanel(contentRect: NSRect(x: 0, y: 0, width: 250, height: 160), styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
         panel.isFloatingPanel = true
+        panel.identifier = NSUserInterfaceItemIdentifier("CodexQuotaPanel")
         panel.level = .floating
         panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
         panel.isOpaque = false
         panel.backgroundColor = .clear
         panel.hasShadow = true
+        panel.isMovableByWindowBackground = true
         panel.contentView = NSHostingView(rootView: QuotaView(model: model))
         positionPanel()
         panel.orderFrontRegardless()
