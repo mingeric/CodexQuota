@@ -121,7 +121,6 @@ struct QuotaView: View {
     @State private var draftCornerRadius = 15.0
     @State private var skinImage: NSImage?
     @State private var showingSkinEditor = false
-    @State private var lastDragTranslation = CGSize.zero
 
     private var savedBackground: Color { Color(hex: savedBackgroundHex) }
     private var accent: Color { Color(hex: savedAccentHex) }
@@ -140,19 +139,7 @@ struct QuotaView: View {
                     .frame(width: 17, height: 17).clipShape(RoundedRectangle(cornerRadius: 4))
                 Text("Codex 额度").font(.system(size: 13, weight: .semibold))
             }
-            .contentShape(Rectangle())
-            .gesture(DragGesture(minimumDistance: 3)
-                .onChanged { value in
-                    let dx = value.translation.width - lastDragTranslation.width
-                    let dy = value.translation.height - lastDragTranslation.height
-                    if let panel = NSApp.windows.first(where: { $0.identifier?.rawValue == "CodexQuotaPanel" && $0.isVisible }) {
-                        let origin = panel.frame.origin
-                        panel.setFrameOrigin(NSPoint(x: origin.x + dx, y: origin.y - dy))
-                    }
-                    lastDragTranslation = value.translation
-                }
-                .onEnded { _ in lastDragTranslation = .zero }
-            )
+            .overlay(WindowDragHandle().accessibilityHidden(true))
             .help("拖动这里移动面板")
 
             HStack(spacing: 8) {
@@ -312,6 +299,21 @@ struct QuotaView: View {
 
     private func cleanHex(_ value: String) -> String {
         String(value.uppercased().filter(\.isHexDigit).prefix(6))
+    }
+}
+
+private struct WindowDragHandle: NSViewRepresentable {
+    func makeNSView(context: Context) -> NSView { DragView() }
+    func updateNSView(_ nsView: NSView, context: Context) {}
+
+    private final class DragView: NSView {
+        override func mouseDown(with event: NSEvent) {
+            window?.performDrag(with: event)
+        }
+
+        override func resetCursorRects() {
+            addCursorRect(bounds, cursor: .openHand)
+        }
     }
 }
 
