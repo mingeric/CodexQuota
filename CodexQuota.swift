@@ -171,7 +171,7 @@ struct QuotaView: View {
                                     Spacer()
                                     Text("\(Int(draftOpacity * 100))%").monospacedDigit().foregroundStyle(.secondary)
                                 }
-                                Slider(value: $draftOpacity, in: 0.12...0.85)
+                                Slider(value: $draftOpacity, in: 0.28...0.85)
                             }.font(.system(size: 12))
                             VStack(alignment: .leading, spacing: 5) {
                                 HStack {
@@ -246,7 +246,10 @@ struct QuotaView: View {
         }
         .clipShape(RoundedRectangle(cornerRadius: savedCornerRadius, style: .continuous))
         .overlay(RoundedRectangle(cornerRadius: savedCornerRadius, style: .continuous).stroke(.white.opacity(0.13), lineWidth: 1))
-        .onAppear(perform: loadSkinImage)
+        .onAppear {
+            loadSkinImage()
+            if savedBackgroundOpacity < 0.28 { savedBackgroundOpacity = 0.48 }
+        }
     }
 
     private func importSkin() {
