@@ -15,7 +15,7 @@ final class QuotaModel: ObservableObject {
     @Published var windows: [QuotaWindow] = []
     @Published var status = "正在读取额度…"
     @Published var updatedAt: Date?
-    @Published var memoryMB: Double?
+    @Published var systemMemoryLabel = "内存读取中"
     private var memoryTimer: Timer?
     func start() {
         Task { await refresh() }
@@ -26,14 +26,19 @@ final class QuotaModel: ObservableObject {
     }
 
     private func updateMemory() {
-        var info = mach_task_basic_info()
-        var count = mach_msg_type_number_t(MemoryLayout<mach_task_basic_info>.size / MemoryLayout<natural_t>.size)
+        var info = vm_statistics64()
+        var count = mach_msg_type_number_t(MemoryLayout<vm_statistics64_data_t>.size / MemoryLayout<integer_t>.size)
         let result = withUnsafeMutablePointer(to: &info) { pointer in
             pointer.withMemoryRebound(to: integer_t.self, capacity: Int(count)) {
-                task_info(mach_task_self_, task_flavor_t(MACH_TASK_BASIC_INFO), $0, &count)
+                host_statistics64(mach_host_self(), HOST_VM_INFO64, $0, &count)
             }
         }
-        if result == KERN_SUCCESS { memoryMB = Double(info.resident_size) / 1_048_576 }
+        guard result == KERN_SUCCESS else { return }
+        let pageSize = UInt64(vm_page_size)
+        let usedPages = UInt64(info.active_count) + UInt64(info.wire_count) + UInt64(info.compressor_page_count)
+        let usedGB = Double(usedPages * pageSize) / 1_073_741_824
+        let totalGB = Double(ProcessInfo.processInfo.physicalMemory) / 1_073_741_824
+        systemMemoryLabel = String(format: "内存 %.1f / %.0f GB", usedGB, totalGB)
     }
 
     func refresh() async {
@@ -109,8 +114,8 @@ struct QuotaView: View {
     @AppStorage("accentHex") private var savedAccentHex = "8CD1FC"
     @AppStorage("panelCornerRadius") private var savedCornerRadius = 15.0
     @AppStorage("skinImagePath") private var skinImagePath = ""
-    @State private var draftBackground = Color(red: 23 / 255, green: 33 / 255, blue: 43 / 255)
-    @State private var draftAccent = Color(red: 140 / 255, green: 209 / 255, blue: 252 / 255)
+    @State private var draftBackgroundHex = "17212B"
+    @State private var draftAccentHex = "8CD1FC"
     @State private var draftOpacity = 0.38
     @State private var draftCornerRadius = 15.0
     @State private var skinImage: NSImage?
@@ -119,12 +124,19 @@ struct QuotaView: View {
 
     private var savedBackground: Color { Color(hex: savedBackgroundHex) }
     private var accent: Color { Color(hex: savedAccentHex) }
+    private var draftBackgroundBinding: Binding<String> {
+        Binding(get: { draftBackgroundHex }, set: { draftBackgroundHex = cleanHex($0) })
+    }
+    private var draftAccentBinding: Binding<String> {
+        Binding(get: { draftAccentHex }, set: { draftAccentHex = cleanHex($0) })
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack(spacing: 8) {
                 Image(systemName: "line.3.horizontal").font(.system(size: 10, weight: .bold)).foregroundStyle(.white.opacity(0.45))
-                Image(systemName: "gauge.with.dots.needle.67percent").foregroundStyle(accent)
+                Image(nsImage: NSApp.applicationIconImage).resizable().interpolation(.high)
+                    .frame(width: 17, height: 17).clipShape(RoundedRectangle(cornerRadius: 4))
                 Text("Codex 额度").font(.system(size: 13, weight: .semibold))
             }
             .contentShape(Rectangle())
@@ -147,8 +159,8 @@ struct QuotaView: View {
                 Button { Task { await model.refresh() } } label: { Image(systemName: "arrow.clockwise") }
                     .buttonStyle(.plain).foregroundStyle(.white.opacity(0.7)).help("立即刷新")
                 Button {
-                    draftBackground = savedBackground
-                    draftAccent = accent
+                    draftBackgroundHex = savedBackgroundHex
+                    draftAccentHex = savedAccentHex
                     draftOpacity = savedBackgroundOpacity
                     draftCornerRadius = savedCornerRadius
                     showingSkinEditor.toggle()
@@ -157,8 +169,28 @@ struct QuotaView: View {
                     .popover(isPresented: $showingSkinEditor, arrowEdge: .top) {
                         VStack(alignment: .leading, spacing: 14) {
                             Text("背景皮肤").font(.system(size: 13, weight: .semibold))
-                            ColorPicker("背景颜色", selection: $draftBackground, supportsOpacity: false)
-                            ColorPicker("强调色", selection: $draftAccent, supportsOpacity: false)
+                            ColorPicker("背景颜色", selection: Binding(
+                                get: { Color(hex: draftBackgroundHex) },
+                                set: { draftBackgroundHex = $0.hexString }
+                            ), supportsOpacity: false)
+                            HStack {
+                                Text("背景 HEX")
+                                Spacer()
+                                Text("#")
+                                TextField("RRGGBB", text: draftBackgroundBinding)
+                                    .textFieldStyle(.roundedBorder).font(.system(size: 11, design: .monospaced)).frame(width: 92)
+                            }
+                            ColorPicker("强调色", selection: Binding(
+                                get: { Color(hex: draftAccentHex) },
+                                set: { draftAccentHex = $0.hexString }
+                            ), supportsOpacity: false)
+                            HStack {
+                                Text("强调 HEX")
+                                Spacer()
+                                Text("#")
+                                TextField("RRGGBB", text: draftAccentBinding)
+                                    .textFieldStyle(.roundedBorder).font(.system(size: 11, design: .monospaced)).frame(width: 92)
+                            }
                             HStack {
                                 Button("导入图片皮肤…", action: importSkin)
                                 if !skinImagePath.isEmpty {
@@ -183,22 +215,23 @@ struct QuotaView: View {
                             }.font(.system(size: 12))
                             HStack {
                                 Button("默认") {
-                                    draftBackground = Color(hex: "17212B")
-                                    draftAccent = Color(hex: "8CD1FC")
+                                    draftBackgroundHex = "17212B"
+                                    draftAccentHex = "8CD1FC"
                                     draftOpacity = 0.38
                                     draftCornerRadius = 15
                                 }
                                 Spacer()
                                 Button("保存并覆盖当前皮肤") {
-                                    savedBackgroundHex = draftBackground.hexString
-                                    savedAccentHex = draftAccent.hexString
+                                    savedBackgroundHex = draftBackgroundHex
+                                    savedAccentHex = draftAccentHex
                                     savedBackgroundOpacity = draftOpacity
                                     savedCornerRadius = draftCornerRadius
                                     showingSkinEditor = false
                                 }.buttonStyle(.borderedProminent)
+                                    .disabled(draftBackgroundHex.count != 6 || draftAccentHex.count != 6)
                             }
                         }
-                        .padding(16).frame(width: 245)
+                        .padding(16).frame(width: 275)
                     }
                 Button { NSApp.terminate(nil) } label: { Image(systemName: "xmark") }
                     .buttonStyle(.plain).foregroundStyle(.white.opacity(0.55)).help("退出")
@@ -226,7 +259,7 @@ struct QuotaView: View {
                 }
                 Text("\(model.updatedAt.map { "更新于 \($0.formatted(date: .omitted, time: .shortened))" } ?? model.status) · 手动刷新").font(.system(size: 9)).foregroundStyle(.white.opacity(0.4))
             }
-            Text("内存 \(model.memoryMB.map { "\(Int($0.rounded())) MB" } ?? "读取中")")
+            Text(model.systemMemoryLabel)
                 .font(.system(size: 9, design: .rounded)).foregroundStyle(.white.opacity(0.45))
         }
         .padding(14).frame(width: 250)
@@ -274,6 +307,10 @@ struct QuotaView: View {
 
     private func loadSkinImage() {
         skinImage = skinImagePath.isEmpty ? nil : NSImage(contentsOfFile: skinImagePath)
+    }
+
+    private func cleanHex(_ value: String) -> String {
+        String(value.uppercased().filter(\.isHexDigit).prefix(6))
     }
 }
 
